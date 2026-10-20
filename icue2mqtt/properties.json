@@ -2,5 +2,7 @@
   "logPath": "C:\\temp\\servicelog.txt",
   "mqttCredentialsPwd": "",
   "mqttCredentialsUser": "",
-  "mqttUrl": ""
+  "mqttUrl": "",
+  "openCueUrl": "http://localhost:25555",
+  "autoManualMode": true
 }

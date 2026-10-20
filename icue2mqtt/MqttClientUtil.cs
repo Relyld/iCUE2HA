@@ -1,5 +1,6 @@
 ﻿using CUESDK;
 using icue2mqtt.Models;
+using icue2mqtt.OpenCue;
 using IcueHelper;
 using IcueHelper.Models;
 using MQTTnet;
@@ -30,6 +31,29 @@ namespace icue2mqtt
         internal const string TOPIC_CONTROL_SWITCH_CONFIG = "homeassistant/switch/icue2mqtt/icue_control/config";
         internal const string TOPIC_CONTROL_SWITCH_SET = "homeassistant/switch/icue2mqtt/icue_control/set";
         internal const string TOPIC_CONTROL_SWITCH_STATE = "homeassistant/switch/icue2mqtt/icue_control/state";
+
+        internal const string TOPIC_PROFILE_CONFIG = "homeassistant/select/icue2mqtt/profile/config";
+        internal const string TOPIC_PROFILE_SET = "homeassistant/select/icue2mqtt/profile/set";
+        internal const string TOPIC_PROFILE_STATE = "homeassistant/select/icue2mqtt/profile/state";
+
+        /// <summary>
+        /// Layer priority of this service when it drives the lighting (above iCUE's own layer, 127).
+        /// </summary>
+        private const int LAYER_PRIORITY_MANUAL = 130;
+
+        /// <summary>
+        /// Layer priority of this service when it leaves the lighting to iCUE / a profile (below iCUE's own layer, 127).
+        /// </summary>
+        private const int LAYER_PRIORITY_RELEASED = 126;
+
+        private const int PROFILE_REFRESH_SECONDS = 30;
+
+        /// <summary>
+        /// Tracks the current mode (Manual / iCUE / profile) and talks to the Open CUE service.
+        /// </summary>
+        private ProfileModeManager profileManager;
+
+        private System.Threading.Timer profileTimer;
 
         /// <summary>
         /// Gets or sets the icue SDK.
@@ -138,6 +162,11 @@ namespace icue2mqtt
         internal async System.Threading.Tasks.Task StopAsync()
         {
             stopping = true;
+            if (profileTimer != null)
+            {
+                profileTimer.Dispose();
+                profileTimer = null;
+            }
             if (Client != null && Client.IsConnected)
             {
                 await Client.DisconnectAsync();
@@ -156,9 +185,13 @@ namespace icue2mqtt
         {
             if (Client.IsConnected)
             {
+                // The profile select does not need the iCUE SDK, so it is published first.
+                PublishProfileSelect();
+
                 if (IcueSdk == null)
                 {
                     IcueSdk = new Sdk(false);
+                    ApplyModeToSdk();
                 }
                 if (MqttIcueDeviceList.GetDevices().Length == 0)
                 {
@@ -279,6 +312,11 @@ namespace icue2mqtt
         {
             string jsonMessage = Encoding.UTF8.GetString(e.ApplicationMessage.Payload, 0, e.ApplicationMessage.Payload.Length);
             Console.WriteLine(e.ApplicationMessage.Topic);
+            if (e.ApplicationMessage.Topic == TOPIC_PROFILE_SET)
+            {
+                return SelectModeAsync(jsonMessage);
+            }
+
             if (e.ApplicationMessage.Topic == MqttIcueDeviceList.TOPIC_ALL_DEVICE_STATE)
             {
                 SendStateUpdate(MqttIcueDeviceList.TOPIC_ALL_DEVICE_STATE, MqttIcueDeviceList.GetAllDeviceAverageState());
@@ -313,25 +351,138 @@ namespace icue2mqtt
                 {
                     Logger.LogError("SDK error applying command to device", new Exception(error.ToString()));
                 }
+                // Driving a light from Home Assistant means taking the lighting back from the active profile.
+                if (profileManager != null && !profileManager.IsManual
+                    && icue2mqttService.appProperties != null && icue2mqttService.appProperties.autoManualMode)
+                {
+                    return SelectModeAsync(ProfileModeManager.ModeManual);
+                }
                 return Task.CompletedTask;
             }
 
             if (e.ApplicationMessage.Topic == TOPIC_CONTROL_SWITCH_SET)
             {
-                if (jsonMessage.Equals("ON"))
-                {
-                    HasControl = true;
-                    IcueSdk.SetLayerPriority(130);
-                }
-                else
-                {
-                    HasControl = false;
-                    IcueSdk.SetLayerPriority(126);
-                }
-                SendControlSwitchUpdate();
-                return Task.CompletedTask;
+                // The "iCue Control" switch is kept for compatibility: ON = Manual mode, OFF = iCUE mode.
+                return SelectModeAsync(jsonMessage.Trim().Equals("ON", StringComparison.OrdinalIgnoreCase)
+                    ? ProfileModeManager.ModeManual
+                    : ProfileModeManager.ModeIcue);
             }
             return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Selects a mode (Manual / iCUE) or an iCUE profile, applies it to the SDK layer and publishes the new state.
+        /// </summary>
+        /// <param name="option">The option name.</param>
+        private async Task SelectModeAsync(string option)
+        {
+            try
+            {
+                if (profileManager == null)
+                {
+                    return;
+                }
+                await profileManager.SelectAsync(option).ConfigureAwait(false);
+                ApplyModeToSdk();
+                // Published even when the selection failed so that Home Assistant gets back the real value.
+                PublishProfileState();
+                SendControlSwitchUpdate();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Error selecting the iCUE profile / mode", ex);
+            }
+        }
+
+        /// <summary>
+        /// Gives the lighting to this service (Manual mode) or leaves it to iCUE / the active profile.
+        /// </summary>
+        private void ApplyModeToSdk()
+        {
+            HasControl = profileManager == null || profileManager.IsManual;
+            if (IcueSdk != null)
+            {
+                IcueSdk.SetLayerPriority(HasControl ? LAYER_PRIORITY_MANUAL : LAYER_PRIORITY_RELEASED);
+            }
+        }
+
+        /// <summary>
+        /// Subscribes to the profile select command topic, then loads and publishes the profile list.
+        /// </summary>
+        private void PublishProfileSelect()
+        {
+            if (profileManager == null)
+            {
+                profileManager = new ProfileModeManager(new OpenCueClient(icue2mqttService.appProperties.openCueUrl));
+            }
+            MqttClientSubscribeOptions subscriptions = new MqttClientSubscribeOptions();
+            subscriptions.TopicFilters = new List<MqttTopicFilter>
+            {
+                new MqttTopicFilter()
+                {
+                    Topic = TOPIC_PROFILE_SET,
+                    QualityOfServiceLevel = MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce
+                }
+            };
+            Client.SubscribeAsync(subscriptions);
+            _ = RefreshProfilesAsync(true);
+            if (profileTimer == null)
+            {
+                profileTimer = new System.Threading.Timer(
+                    state => { _ = RefreshProfilesAsync(false); },
+                    null,
+                    TimeSpan.FromSeconds(PROFILE_REFRESH_SECONDS),
+                    TimeSpan.FromSeconds(PROFILE_REFRESH_SECONDS));
+            }
+        }
+
+        /// <summary>
+        /// Reloads the profiles from Open CUE and republishes the select entity when something changed.
+        /// </summary>
+        /// <param name="forcePublish">if set to <c>true</c> the entity is published even if nothing changed.</param>
+        private async Task RefreshProfilesAsync(bool forcePublish)
+        {
+            try
+            {
+                bool changed = await profileManager.RefreshAsync().ConfigureAwait(false);
+                if (changed)
+                {
+                    ApplyModeToSdk();
+                }
+                if ((changed || forcePublish) && Client != null && Client.IsConnected)
+                {
+                    string config = new MqttIcueSelectDiscovery(
+                        "iCUE Profile", "icue2mqtt_profile", TOPIC_PROFILE_STATE, TOPIC_PROFILE_SET, profileManager.GetOptions()).ToJson();
+                    await Client.PublishAsync(new MqttApplicationMessageBuilder()
+                      .WithTopic(TOPIC_PROFILE_CONFIG)
+                      .WithPayload(Encoding.UTF8.GetBytes(config))
+                      .WithQualityOfServiceLevel(MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
+                      .WithRetainFlag(true)
+                      .Build()).ConfigureAwait(false);
+                    PublishProfileState();
+                    SendControlSwitchUpdate();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Error refreshing the iCUE profiles", ex);
+            }
+        }
+
+        /// <summary>
+        /// Publishes the current mode / profile (retained, so Home Assistant restores it after a restart).
+        /// </summary>
+        private void PublishProfileState()
+        {
+            if (Client != null && Client.IsConnected && profileManager != null)
+            {
+                Client.PublishAsync(new MqttApplicationMessageBuilder()
+                  .WithTopic(TOPIC_PROFILE_STATE)
+                  .WithPayload(Encoding.UTF8.GetBytes(profileManager.Current))
+                  .WithQualityOfServiceLevel(MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce)
+                  .WithRetainFlag(true)
+                  .Build());
+            }
         }
 
         /// <summary>

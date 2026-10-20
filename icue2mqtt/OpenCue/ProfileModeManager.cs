@@ -156,7 +156,7 @@ namespace icue2mqtt.OpenCue
                     catch (Exception ex)
                     {
                         // Open CUE not installed or not started: nothing we know of is active, so carry on.
-                        Logger.LogError("Open CUE: could not deactivate the profiles", ex);
+                        Logger.LogInformation("Open CUE: could not deactivate the profiles (" + ex.Message + ")");
                     }
                     Current = manual ? ModeManual : ModeIcue;
                     return true;
@@ -172,7 +172,7 @@ namespace icue2mqtt.OpenCue
                     }
                     catch (Exception ex)
                     {
-                        Logger.LogError("Open CUE: could not list the profiles", ex);
+                        Logger.LogInformation("Open CUE: could not list the profiles (" + ex.Message + ")");
                     }
                     profile = FindProfile(requested);
                 }

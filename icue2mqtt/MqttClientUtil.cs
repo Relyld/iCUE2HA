@@ -56,6 +56,11 @@ namespace icue2mqtt
         private System.Threading.Timer profileTimer;
 
         /// <summary>
+        /// True once the SDK layer priority was lowered to let iCUE / a profile show through.
+        /// </summary>
+        private bool layerReleased;
+
+        /// <summary>
         /// Gets or sets the icue SDK.
         /// </summary>
         /// <value>
@@ -402,9 +407,21 @@ namespace icue2mqtt
         private void ApplyModeToSdk()
         {
             HasControl = profileManager == null || profileManager.IsManual;
-            if (IcueSdk != null)
+            if (IcueSdk == null)
             {
-                IcueSdk.SetLayerPriority(HasControl ? LAYER_PRIORITY_MANUAL : LAYER_PRIORITY_RELEASED);
+                return;
+            }
+            if (!HasControl)
+            {
+                IcueSdk.SetLayerPriority(LAYER_PRIORITY_RELEASED);
+                layerReleased = true;
+            }
+            else if (layerReleased)
+            {
+                // Only touch the priority to take the lighting back: at startup the SDK default is kept,
+                // exactly as before profiles were supported.
+                IcueSdk.SetLayerPriority(LAYER_PRIORITY_MANUAL);
+                layerReleased = false;
             }
         }
 

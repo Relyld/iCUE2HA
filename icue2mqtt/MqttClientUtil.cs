@@ -261,7 +261,9 @@ namespace icue2mqtt
                     {
                         Payload = Encoding.UTF8.GetBytes(new MqttIcueControlSwitchDiscovery(TOPIC_CONTROL_SWITCH_STATE, TOPIC_CONTROL_SWITCH_SET).ToJson()),
                         Topic = TOPIC_CONTROL_SWITCH_CONFIG,
-                        Retain = false,
+                        // Retained like the lights, otherwise the switch disappears from Home Assistant
+                        // each time MQTT is reloaded or Home Assistant restarts, until the service restarts.
+                        Retain = true,
                         QualityOfServiceLevel = MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce
                     };
                     Client.PublishAsync(publishMessage).ContinueWith(e =>
@@ -567,7 +569,7 @@ namespace icue2mqtt
                   .WithTopic(TOPIC_CONTROL_SWITCH_STATE)
                   .WithPayload(Encoding.UTF8.GetBytes(HasControl? "ON": "OFF"))
                   .WithQualityOfServiceLevel(MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce)
-                  .WithRetainFlag(false)
+                  .WithRetainFlag(true)
                   .Build());
             }
         }

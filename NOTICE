@@ -1,0 +1,20 @@
+iCUE2HA
+Copyright (c) 2020 tobinbrooke
+Copyright (c) 2026 Relyld
+
+This product includes software developed as part of the Open CUE Service
+(https://github.com/Legion2/open-cue-service) by Legion2, licensed under the
+Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+
+The following files are derived from that project:
+  IcueHelper/GameSdk/CgSdkInterop.cs
+  IcueHelper/GameSdk/CgSdkProtocolDetails.cs
+  IcueHelper/GameSdk/CgSdkError.cs
+
+The CorsairProtocolDetails structure those files describe originates from
+RGB.NET (https://github.com/DarthAffe/RGB.NET) by DarthAffe.
+
+The software iCUE and the library CgSDK.x64_2015.dll are supplied by Corsair
+Components, Inc. under different terms. That library is NOT distributed with
+this project and has to be obtained separately; for more information, contact
+Corsair Components, Inc.

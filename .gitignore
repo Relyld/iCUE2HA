@@ -10,3 +10,6 @@
 /IcueHelper/bin/Debug/netstandard2.1
 /icue2mqtt/bin/Release/netcoreapp3.1/win-x64
 /IcueHelper/bin/Release/netstandard2.1
+
+# Corsair Game SDK library, supplied by Corsair and not redistributed here
+CgSDK.x64_2015.dll

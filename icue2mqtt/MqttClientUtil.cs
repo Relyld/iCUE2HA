@@ -1,6 +1,6 @@
 ﻿using CUESDK;
 using icue2mqtt.Models;
-using icue2mqtt.OpenCue;
+using icue2mqtt.Profiles;
 using IcueHelper;
 using IcueHelper.Models;
 using MQTTnet;
@@ -49,7 +49,7 @@ namespace icue2mqtt
         private const int PROFILE_REFRESH_SECONDS = 30;
 
         /// <summary>
-        /// Tracks the current mode (Manual / iCUE / profile) and talks to the Open CUE service.
+        /// Tracks the current mode (Manual / iCUE / profile) and drives the iCUE Game SDK.
         /// </summary>
         private ProfileModeManager profileManager;
 
@@ -171,6 +171,12 @@ namespace icue2mqtt
             {
                 profileTimer.Dispose();
                 profileTimer = null;
+            }
+            if (profileManager != null)
+            {
+                // Clears the profiles and gives the Game SDK back before leaving.
+                profileManager.Dispose();
+                profileManager = null;
             }
             if (Client != null && Client.IsConnected)
             {
@@ -432,7 +438,9 @@ namespace icue2mqtt
         {
             if (profileManager == null)
             {
-                profileManager = new ProfileModeManager(new OpenCueClient(icue2mqttService.appProperties.openCueUrl));
+                profileManager = new ProfileModeManager(new ProfileStore(
+                    icue2mqttService.appProperties.gameSdkEffectsPath,
+                    icue2mqttService.appProperties.profilesDirectory));
             }
             MqttClientSubscribeOptions subscriptions = new MqttClientSubscribeOptions();
             subscriptions.TopicFilters = new List<MqttTopicFilter>

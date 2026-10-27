@@ -5,7 +5,8 @@
 .DESCRIPTION
     1. Publishes the project to a clean temporary folder (the running service is not touched if the build fails).
     2. Stops the service (and kills a leftover icue2mqtt.exe).
-    3. Empties the destination folder, keeping the existing properties.json (MQTT URL, credentials...).
+    3. Empties the destination folder, keeping the existing properties.json (MQTT URL, credentials...)
+       and the Corsair Game SDK library used for the iCUE profiles.
     4. Copies the new build, then restarts the service and shows its latest log entries.
 
     The script relaunches itself as administrator when needed.
@@ -20,6 +21,12 @@
 .PARAMETER Pull
     Runs "git pull --ff-only" in the repository before building.
 
+.PARAMETER GameSdkDll
+    Full path of CgSDK.x64_2015.dll, needed for the iCUE profiles only. The script keeps the copy it
+    already deployed, otherwise it looks for one and caches it at the root of the repository.
+    The library is supplied by Corsair and is not distributed with this project; the easiest source is
+    the Open CUE Service release (https://github.com/Legion2/open-cue-service).
+
 .EXAMPLE
     .\deploy.ps1
     .\deploy.ps1 -Pull
@@ -29,6 +36,7 @@
 param(
     [string]$Destination = 'C:\MQTT',
     [string]$ServiceName = 'icue2mqttService',
+    [string]$GameSdkDll = '',
     [switch]$Pull
 )
 
@@ -47,6 +55,35 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 
 function Write-Step([string]$text) {
     Write-Host "==> $text" -ForegroundColor Cyan
+}
+
+$GameSdkDllName = 'CgSDK.x64_2015.dll'
+
+# Looks for the Corsair Game SDK library in the places it is likely to already be on this machine.
+function Find-GameSdkDll([string]$explicitPath, [string]$repoDir) {
+    if ($explicitPath) {
+        if (Test-Path -LiteralPath $explicitPath) { return (Resolve-Path -LiteralPath $explicitPath).Path }
+        throw "GameSdkDll '$explicitPath' does not exist."
+    }
+
+    $cached = Join-Path $repoDir $GameSdkDllName
+    if (Test-Path -LiteralPath $cached) { return $cached }
+
+    # Open CUE ships the same library: if its service is running, take it from there.
+    $process = Get-Process -Name 'open-cue-service' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($process -and $process.Path) {
+        $candidate = Join-Path (Split-Path -Parent $process.Path) $GameSdkDllName
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+
+    foreach ($folder in @('Downloads', 'Desktop', 'Documents')) {
+        $root = Join-Path $env:USERPROFILE $folder
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        $found = Get-ChildItem -LiteralPath $root -Filter $GameSdkDllName -Recurse -Depth 3 -File -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($found) { return $found.FullName }
+    }
+    return $null
 }
 
 $failed = $false
@@ -95,6 +132,11 @@ try {
     $hadProps    = Test-Path $propsPath
     if ($hadProps) { Copy-Item $propsPath $propsBackup -Force }
 
+    $dllPath   = Join-Path $Destination $GameSdkDllName
+    $dllBackup = Join-Path ([IO.Path]::GetTempPath()) "icue2mqtt-$GameSdkDllName.bak"
+    $hadDll    = Test-Path $dllPath
+    if ($hadDll) { Copy-Item $dllPath $dllBackup -Force }
+
     if (-not (Test-Path $Destination)) { New-Item -ItemType Directory -Path $Destination | Out-Null }
     Get-ChildItem -Path $Destination -Force | Remove-Item -Recurse -Force
     Copy-Item -Path (Join-Path $publishDir '*') -Destination $Destination -Recurse -Force
@@ -104,6 +146,24 @@ try {
         Write-Host 'properties.json kept.'
     } else {
         Write-Warning "No properties.json existed in $Destination. Edit the new one (mqttUrl, credentials) before using the service."
+    }
+
+    # ---- Corsair Game SDK library, only needed to switch iCUE profiles -----------------------
+    if ($hadDll) {
+        Copy-Item $dllBackup $dllPath -Force
+        Write-Host "$GameSdkDllName kept."
+    } else {
+        $source = Find-GameSdkDll $GameSdkDll $repoDir
+        if ($source) {
+            Copy-Item $source $dllPath -Force
+            Write-Host "$GameSdkDllName taken from $source."
+            $cached = Join-Path $repoDir $GameSdkDllName
+            if ($source -ne $cached) { Copy-Item $source $cached -Force }
+        } else {
+            Write-Warning "$GameSdkDllName not found: the lights will work but the iCUE profiles will not."
+            Write-Host "  Get it from https://github.com/Legion2/open-cue-service (it is supplied by Corsair),"
+            Write-Host "  then put it in $Destination or run: .\deploy.ps1 -GameSdkDll <path>"
+        }
     }
 
     # ---- restart ------------------------------------------------------------------------------

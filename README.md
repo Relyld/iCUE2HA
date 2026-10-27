@@ -5,9 +5,9 @@ Corsair iCUE ↔ Home Assistant, over MQTT
 
 A C# .NET core Windows service, allowing Home Assistant to discover and control the LED color and brightness of Corsair iCUE devices installed on the host system over MQTT. Each iCUE device will be discovered as a separate RGB LED light bulb.
 
-It can also **switch the iCUE lighting profile** from Home Assistant (for example when a game starts), through the [Open CUE](https://github.com/Legion2/open-cue-service) service. See *Profiles and manual mode* below.
+It can also **switch the iCUE lighting profile** from Home Assistant, for example when a game starts. Both Corsair SDKs are used by this single service: the *iCUE SDK* for the colors and the *Game SDK* for the profiles, so there is no second program to install and keep running. See *Profiles and manual mode* below.
 
-> Work in progress: the goal is a single, simple installer (service + Open CUE + a small profile manager). Today the service has to be built and deployed with `deploy.cmd`, and Open CUE installed separately.
+> Work in progress: the goal is a one-click installer and a small tool to manage the profiles. Today the service is built and deployed with `deploy.cmd`, and `CgSDK.x64_2015.dll` has to be fetched once (see *Profiles: what you need*).
 
 *prerequisites*
 
@@ -50,14 +50,15 @@ The service publishes, besides the lights, a **select** entity named `iCUE Profi
 
 | Option | Who draws the lighting | What happens |
 |---|---|---|
-| `Manual` | this service | All Open CUE profiles are deactivated. The color and brightness set on the lights in Home Assistant are shown, over iCUE's own lighting. |
-| `iCUE` | iCUE | All Open CUE profiles are deactivated and this service steps back: iCUE shows its own configuration. |
-| *a profile name* | the profile | The profile is activated through Open CUE and this service steps back. |
+| `Manual` | this service | Every profile is cleared and the Game SDK control is released. The color and brightness set on the lights in Home Assistant are shown, over iCUE's own lighting. |
+| `iCUE` | iCUE | Every profile is cleared and this service steps back: iCUE shows its own configuration. |
+| *a profile name* | the profile | The profile is activated through the Game SDK and this service steps back. |
 
-The select (and the existing `iCue Control` switch, where ON = `Manual` and OFF = `iCUE`) are always kept in sync with what is really active:
+The select (and the existing `iCue Control` switch, where ON = `Manual` and OFF = `iCUE`) follow what the service is doing:
 * sending a color, a brightness or ON/OFF to any light switches back to `Manual` (set `"autoManualMode": false` in `properties.json` to disable this);
-* a profile activated from elsewhere (open-cue-cli, another MQTT bridge...) is detected within 30 seconds;
-* profiles added to / removed from Open CUE are picked up within 30 seconds, no restart needed.
+* profiles added to or removed from `priorities.cfg` are picked up within 30 seconds, no restart needed;
+* when iCUE is restarted the service reconnects and puts the selected profile back on;
+* the Game SDK control is only held while a profile is actually active, so it stays out of the way of the colors sent from Home Assistant.
 
 Home Assistant automation example, driven by the Steam integration:
 ```yaml
@@ -82,14 +83,15 @@ automation:
         data: { option: "iCUE" }
 ```
 
-*Open CUE prerequisites*
+*Profiles: what you need*
 
-Profile switching relies on the iCUE Game SDK, which is only reachable through [Open CUE](https://github.com/Legion2/open-cue-service) (REST API on `http://localhost:25555`, change it with `openCueUrl` in `properties.json`). Without Open CUE the service still works, the select just offers `Manual` and `iCUE`.
-* In iCUE, enable the SDK (Settings → *iCUE SDK and Game SDK*).
-* Install Open CUE and run it as the logged-in user (not as a Windows service in session 0).
-* Profiles live in `C:\ProgramData\Corsair\CUE5\GameSdkEffects\profiles` (iCUE 5) and are listed in `priorities.cfg`, one `Name=priority` per line, **without any leading space**, unique priorities, names made of `a-z A-Z _` only.
+Profile switching uses the Corsair **Game SDK**, whose library `CgSDK.x64_2015.dll` is supplied by Corsair under its own terms and is therefore **not** distributed with this project. Without it the service still works, the select simply offers `Manual` and `iCUE` only.
+* In iCUE, enable both SDKs (Settings → *iCUE SDK and Game SDK*).
+* Get `CgSDK.x64_2015.dll` from the [Open CUE Service](https://github.com/Legion2/open-cue-service) release or repository, and put it next to `icue2mqtt.exe` in the deployment folder. `deploy.cmd` keeps it across redeployments and can find an existing copy by itself; `deploy.cmd -GameSdkDll <path>` points it at one.
+* Profiles live in `C:\ProgramData\Corsair\CUE5\GameSdkEffects\profiles` (iCUE 5) and are listed in `priorities.cfg`, one `Name=priority` per line, unique priorities, names made of `a-z A-Z _` only. Leading spaces are ignored by this service.
 * Export the profile from iCUE with only *Lighting Effects* checked; the name cannot be changed after the export.
-* Check with `open-cue-cli profile list`: the names shown must be exactly the ones you want to see in Home Assistant.
+* Another directory can be used with `"profilesDirectory"` in `properties.json`, and an unusual iCUE install with `"gameSdkEffectsPath"`.
+* The profile names read from `priorities.cfg` are written to the service log at startup: they are exactly the options offered in Home Assistant.
 
 If MQTT auto-discovery does not show the entities in your Home Assistant, the same entities can be declared by hand in `configuration.yaml`:
 ```yaml
@@ -138,7 +140,7 @@ Each light has a color and a brightness (0-255) that can be changed independentl
   
 *TODO*
 
-* Supervise Open CUE from the service / one-click installer
+* One-click installer
 * Small tool to add and edit the profiles (`priorities.cfg` and profile files)
 * Move to a currently supported .NET (3.1 is end of life)
 
@@ -149,6 +151,8 @@ Please feel free to give feedback or feature requests
 *Thanks*
 
 Based on the original icue2mqtt project by tobinbrooke (MIT license, see LICENSE).
+
+The Game SDK bindings are derived from the [Open CUE Service](https://github.com/Legion2/open-cue-service) by Legion2 (Apache License 2.0), see [NOTICE](NOTICE).
 
 https://dotnetcoretutorials.com/2019/09/19/creating-windows-services-in-net-core-part-1-the-microsoft-way/
 https://github.com/AndrewBabbitt97/CUESDK.NET

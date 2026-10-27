@@ -9,9 +9,16 @@
         public string mqttOverridePort { get; set; }
 
         /// <summary>
-        /// URL of the Open CUE service used to switch iCUE profiles. Defaults to http://localhost:25555.
+        /// Name of the Game SDK profiles directory, which is also the name the SDK calls the "game".
+        /// Defaults to "profiles".
         /// </summary>
-        public string openCueUrl { get; set; }
+        public string profilesDirectory { get; set; }
+
+        /// <summary>
+        /// Full path of the GameSdkEffects directory, for instance
+        /// C:\ProgramData\Corsair\CUE5\GameSdkEffects. Leave empty to detect the installed iCUE.
+        /// </summary>
+        public string gameSdkEffectsPath { get; set; }
 
         /// <summary>
         /// When true (default), a color/brightness/on-off command sent to a light switches back to

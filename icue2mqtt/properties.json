@@ -3,6 +3,7 @@
   "mqttCredentialsPwd": "",
   "mqttCredentialsUser": "",
   "mqttUrl": "",
-  "openCueUrl": "http://localhost:25555",
+  "profilesDirectory": "profiles",
+  "gameSdkEffectsPath": "",
   "autoManualMode": true
 }

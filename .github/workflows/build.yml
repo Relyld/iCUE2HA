@@ -78,8 +78,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # A version with a suffix, such as v2.0.0-rc.1, is published as a pre-release.
-          $arguments = @('release', 'create', "${{ github.ref_name }}", "${{ steps.package.outputs.name }}",
-                         '--title', "iCUE2HA ${{ github.ref_name }}", '--generate-notes')
-          if ("${{ steps.version.outputs.version }}" -like '*-*') { $arguments += '--prerelease' }
-          & gh @arguments
+          $tag = "${{ github.ref_name }}"
+          $archive = "${{ steps.package.outputs.name }}"
+          # The release may already exist when it was drafted from the GitHub page: then only
+          # the archive is added, so that publishing either way ends up the same.
+          gh release view $tag --json tagName 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists, uploading the archive to it."
+            gh release upload $tag $archive --clobber
+          } else {
+            # A version with a suffix, such as v2.0.0-rc.1, is published as a pre-release.
+            $arguments = @('release', 'create', $tag, $archive, '--title', "iCUE2HA $tag", '--generate-notes')
+            if ("${{ steps.version.outputs.version }}" -like '*-*') { $arguments += '--prerelease' }
+            & gh @arguments
+          }

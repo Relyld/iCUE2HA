@@ -7,18 +7,16 @@ A C# .NET core Windows service, allowing Home Assistant to discover and control 
 
 It can also **switch the iCUE lighting profile** from Home Assistant, for example when a game starts. Both Corsair SDKs are used by this single service: the *iCUE SDK* for the colors and the *Game SDK* for the profiles, so there is no second program to install and keep running. See *Profiles and manual mode* below.
 
-> Work in progress: the goal is a one-click installer and a small tool to manage the profiles. Today the service is built and deployed with `deploy.cmd`, and `CgSDK.x64_2015.dll` has to be fetched once (see *Profiles: the details*).
+> Install it from the [releases](https://github.com/Relyld/iCUE2HA/releases): download the archive, run `install.cmd`, answer two questions. Nothing else to install.
 
-*What you need on the PC, once*
+*What you need on the PC*
 
 | Item | What it is for | Notes |
 |---|---|---|
 | **iCUE** (Corsair) | The only software that talks to the devices: everything goes through it | Settings → SDK: turn on both **iCUE SDK** and **Game SDK** |
-| **.NET Core 3.1 SDK** | Builds the service; it also brings the runtime the service needs | [dotnet-sdk-3.1](https://download.visualstudio.microsoft.com/download/pr/854ca330-4414-4141-9be8-5da3c4be8d04/3792eafd60099b3050313f2edfd31805/dotnet-sdk-3.1.101-win-x64.exe) |
-| **Git and a clone of this repository** | Getting and updating the code | `git clone https://github.com/Relyld/iCUE2HA` |
-| **`CgSDK.x64_2015.dll`** | Corsair's Game SDK library, needed for the profiles only | Download the [Open CUE Service](https://github.com/Legion2/open-cue-service/releases) release, extract it and keep that one file. You do not need to run that program. |
-| **Your iCUE profiles** | What the Home Assistant select will offer | Exported into `C:\ProgramData\Corsair\CUE5\GameSdkEffects\profiles`, listed in `priorities.cfg` |
-| **A Windows service** | Runs the converter at boot | Created once, see *First setup* below |
+| **Your iCUE profiles** | What the Home Assistant select will offer, for profile switching only | Exported into `C:\ProgramData\Corsair\CUE5\GameSdkEffects\profiles` and listed in `priorities.cfg`. Can be done later. |
+
+Nothing else: the release is self contained, so no .NET runtime has to be installed.
 
 *What you need in Home Assistant, once*
 
@@ -34,24 +32,28 @@ It can also **switch the iCUE lighting profile** from Home Assistant, for exampl
 
 Nothing else. In particular, **do not run `open-cue-service.exe` or `open-cue-cli`**: this service drives the Game SDK itself, and two programs asking for the Game SDK at the same time fight over it. Only the `.dll` from that release is needed.
 
-*First setup, in order*
+*Installing*
 
-1. Install iCUE, turn both SDKs on, and restart it.
-2. Create the `profiles` directory, export your profiles into it and write `priorities.cfg`, one `Name=priority` line per profile. Writing in `ProgramData` needs administrator rights.
-3. Clone the repository and put `CgSDK.x64_2015.dll` at its root; `deploy.cmd` picks it up and keeps it from then on.
-4. Run `deploy.cmd`. It builds the project, fills `C:\MQTT`, and tells you the service does not exist yet.
-5. Edit `C:\MQTT\properties.json`: set `mqttUrl` to the broker IP, and the credentials if your broker needs them.
-6. Create the service from an **administrator** PowerShell. The spaces after the `=` signs are required:
-   ```
-   sc.exe create icue2mqttService binPath= "C:\MQTT\icue2mqtt.exe" start= delayed-auto
-   sc.exe start icue2mqttService
-   ```
-7. Check the log:
-   ```
-   Get-WinEvent -LogName icue2mqttLog -MaxEvents 20 | Sort-Object TimeCreated | Format-List TimeCreated,Message
-   ```
-   You should see `Connected to MQTT broker`, `iCUE profiles read from ...` with your profile names, `Game SDK connected`, then one `Publishing device ...` per device.
-8. Look for the entities in Home Assistant. If auto-discovery does not show them, use the YAML below.
+1. Install iCUE, turn both SDKs on in its settings, and restart it.
+2. Download the latest `iCUE2HA-<version>-win-x64.zip` from the [releases](https://github.com/Relyld/iCUE2HA/releases) and extract it anywhere.
+3. Double-click **`install.cmd`**. It asks for administrator rights, then for the address of your MQTT broker and its credentials.
+4. It also offers to download `CgSDK.x64_2015.dll`, which is needed to switch the iCUE profiles. Say no and the lights still work, only the profiles will be missing. See *Profiles: the details*.
+5. It installs into `C:\Program Files\iCUE2HA`, creates the `icue2mqttService` service, starts it and prints the first log lines.
+
+You should see `Connected to MQTT broker`, your profile names, `Game SDK connected`, then one `Publishing device ...` line per device. The devices then appear in Home Assistant under *Settings → Devices & services → MQTT*; if auto-discovery shows nothing, declare them by hand with the YAML below.
+
+To update, extract the new archive and run `install.cmd` again: your settings and the Game SDK library are kept. To remove everything, run `uninstall.ps1`.
+
+*Building it yourself*
+
+Only needed to work on the code; the release above needs none of this.
+* [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) and Git.
+* `git clone https://github.com/Relyld/iCUE2HA`
+* `deploy.cmd` at the root of the repository builds the project and redeploys it into `C:\MQTT` in one step. It keeps your `properties.json` and `CgSDK.x64_2015.dll`, stops and restarts the service, then prints the log. It asks for administrator rights by itself.
+  * `deploy.cmd -Pull` runs `git pull --ff-only` first
+  * `.\deploy.ps1 -Destination "C:\Program Files\iCUE2HA"` to deploy over an installed release
+  * `.\deploy.ps1 -GameSdkDll <path>` points it at a copy of the Game SDK library
+* Every push is built by GitHub Actions, and pushing a `vX.Y.Z` tag publishes the release archive.
 
 *properties.json*
 
@@ -64,12 +66,6 @@ Nothing else. In particular, **do not run `open-cue-service.exe` or `open-cue-cl
 | `profilesDirectory` | Name of the Game SDK profiles directory, `profiles` by default |
 | `gameSdkEffectsPath` | Full path of the `GameSdkEffects` directory, empty to detect the installed iCUE |
 | `autoManualMode` | `false` stops a light command from switching back to `Manual` |
-
-*Updating / quick redeploy*
-
-Once the service is installed, `deploy.cmd` (or `deploy.ps1`) at the root of the repository rebuilds the project and redeploys it in one step: it publishes to a temporary folder, stops the service, empties the deployment folder (default `C:\MQTT`) while keeping your `properties.json`, copies the new build and restarts the service. It asks for administrator rights by itself.
-* `deploy.cmd -Pull` runs `git pull --ff-only` first
-* `.\deploy.ps1 -Destination D:\icue2mqttRelease -ServiceName icue2mqttService` to use another folder or service name
 
 *Profiles and manual mode*
 
@@ -166,9 +162,7 @@ Each light has a color and a brightness (0-255) that can be changed independentl
   
 *TODO*
 
-* One-click installer
 * Small tool to add and edit the profiles (`priorities.cfg` and profile files)
-* Move to a currently supported .NET (3.1 is end of life)
 
 *Suggestions*
 

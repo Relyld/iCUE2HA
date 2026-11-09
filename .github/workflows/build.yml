@@ -1,0 +1,83 @@
+name: build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # The installer is what most people will actually run, so a broken script must fail the build.
+      - name: Check the PowerShell scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($script in Get-ChildItem -Path . -Filter *.ps1 -Recurse -File) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) {
+              $failed = $true
+              Write-Host "::error file=$($script.FullName)::$($errors.Count) parse error(s)"
+              foreach ($e in $errors) { Write-Host "  line $($e.Extent.StartLineNumber): $($e.Message)" }
+            } else {
+              Write-Host "ok  $($script.Name)"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Work out the version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $version = $env:GITHUB_REF -replace '^refs/tags/v', ''
+          } else {
+            $version = "0.0.0-dev.$env:GITHUB_RUN_NUMBER"
+          }
+          Write-Host "version = $version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Build
+        run: dotnet build icue2mqtt.sln -c Release
+
+      - name: Publish
+        run: dotnet publish icue2mqtt/icue2mqtt.csproj -c Release -o publish/app -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Assemble the archive
+        id: package
+        shell: pwsh
+        run: |
+          Copy-Item installer/* publish/ -Force
+          $name = "iCUE2HA-${{ steps.version.outputs.version }}-win-x64.zip"
+          Compress-Archive -Path publish/* -DestinationPath $name -Force
+          Write-Host "$name  ($([math]::Round((Get-Item $name).Length / 1MB, 1)) MB)"
+          "name=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iCUE2HA-win-x64
+          path: ${{ steps.package.outputs.name }}
+          retention-days: 14
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" "${{ steps.package.outputs.name }}" `
+            --title "iCUE2HA ${{ github.ref_name }}" `
+            --generate-notes
